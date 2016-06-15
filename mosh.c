@@ -1,8 +1,5 @@
 /***
  * Author:  Mike Williams
- * Class:   COP4610
- * Project: 1 - Implementing a Shell
- * File:    mosh.c
  ***/
 
 /*** INCLUDES ***/
@@ -21,23 +18,30 @@
 /*** MACROS ***/
 
 #define TIME_BUFFER_SIZE 7
-#define HIST_GROWTH_SIZE 15
+#define HISTORY_GROWTH_SIZE 15
 #define BUFFER_SIZE 128
 #define PATH_DELIM ":"
 #define COMMAND_DELIM " "
 #define BEGIN_SLOT 0
 #define END_SLOT 1
 
+#define NAME "mosh"
+#define CD_COMMAND "cd"
+#define HISTORY_COMMAND "history"
+#define ECHO_COMMAND "echo"
+#define WHICH_COMMAND "which"
+#define VIEWPROC_COMMAND "viewproc"
+#define EXIT_COMMAND "exit"
+
 /*** VARIABLES ***/
 
-char HOSTNAME[BUFFER_SIZE];
-char *USER;
-char *HOME;
-char **PATH;
-char *cwd;
-char *buffer;
-char **command;
-char ***command_args;
+char* USER;
+char* HOME;
+char** PATH;
+char* cwd;
+char* buffer;
+char** command;
+char*** command_args;
 int num_commands;
 
 pid_t pid_self;
@@ -46,23 +50,23 @@ int num_paths;
 int num_children;
 int iter_status;
 
-char *redirect;
+char* redirect;
 
 int keep_input;
 int keep_output;
 
 // storage for history
-char *time_buffer;
+char* time_buffer;
 time_t timestamp;
-struct tm * timeinfo;
+struct tm* timeinfo;
 int hist_log_size;
 int hist_log_capacity;
-char **hist_begin_time;
-char **hist_end_time;
-char **hist_command;
-char *hist_status;
-pid_t *hist_pid;
-int *hist_state;
+char** hist_begin_time;
+char** hist_end_time;
+char** hist_command;
+char* hist_status;
+pid_t* hist_pid;
+int* hist_state;
 
 /*** FUNCTION PROTOTYPES ***/
 
@@ -73,40 +77,37 @@ void clear_buffer();
 void execute(int background);
 void execute_command(int command_num, int fd_in, int fd_out);
 
-void viewproc(char *proc_file);
+void viewproc(char* proc_file);
 void history();
 void extend_log();
-void echo(char **input);
-void cd(char **input);
-void which(char **input, int list_all);
-void swap_home(char **string);
-int num_args(char **arguments);
+void echo(char** input);
+void cd(char** input);
+void which(char** input, int list_all);
+void swap_home(char** string);
+int num_args(char** arguments);
 int expand_env(int command_num, int index);
 void set_time(int time_slot, int index);
 void kill_child();
 
 /*** MAIN FUNCTION ***/
 
-int main(int argc, char **arg) {
+int main(int argc, char** arg) {
   init_env();
 
   while (stay_alive == 1) {
     clear_buffer();
     prompt();
     read_input();
-    if (strlen(buffer) != 0) {
-      if (iter_status == 0) {
-        execute(0);
-      } else if (iter_status == 2) {
-        execute(1);
-      } else {
-        set_time(END_SLOT,hist_log_size-1);
-      }
+    if (strlen(buffer) == 0) {
+      continue;
+    }
+
+    switch(iter_status) {
+      case 0: execute(0); break;
+      case 2: execute(1); break;
+      default: set_time(END_SLOT, hist_log_size-1);
     }
   }
-
-  if (pid_self == getpid())
-    printf("*exit*\n");
 
   return 0;
 }
@@ -119,23 +120,19 @@ void init_env() {
   USER = getenv("USER");
   HOME = getenv("HOME");
 
-  // getenv() is not used on HOSTNAME because it is not a POSIX variable
-  HOSTNAME[BUFFER_SIZE-1] = 0;
-  gethostname(HOSTNAME,BUFFER_SIZE);
-
   // break up individual paths from PATH variable
-  char *token;
+  char* token;
   int num_paths = 0;
-  for (token = strtok(getenv("PATH"),PATH_DELIM);
+  for (token = strtok(getenv("PATH"), PATH_DELIM);
        token != NULL;
-       token = strtok(NULL,PATH_DELIM)) {
-    PATH = (char**)realloc(PATH,(++num_paths+1)*sizeof(char*));
+       token = strtok(NULL, PATH_DELIM)) {
+    PATH = (char**)realloc(PATH, (++num_paths+1)*sizeof(char*));
     PATH[num_paths-1] = strdup(token);
   }
   free(token);
 
   // add NULL to end of PATH array
-  PATH = (char**)realloc(PATH,(++num_paths+1)*sizeof(char*));
+  PATH = (char**)realloc(PATH, (++num_paths+1)*sizeof(char*));
   PATH[num_paths-1] = NULL;
 
   cwd = NULL;
@@ -164,24 +161,25 @@ void init_env() {
 
   // initialize history
   hist_log_size = 0;
-  hist_log_capacity = HIST_GROWTH_SIZE;
-  hist_begin_time = (char**)malloc(HIST_GROWTH_SIZE*sizeof(char*));
-  hist_end_time = (char**)malloc(HIST_GROWTH_SIZE*sizeof(char*));
-  hist_command = (char**)malloc(HIST_GROWTH_SIZE*sizeof(char*));
-  hist_status = (char*)malloc(HIST_GROWTH_SIZE*sizeof(char));
-  hist_pid = (pid_t*)malloc(HIST_GROWTH_SIZE*sizeof(pid_t));
-  hist_state = (int*)malloc(HIST_GROWTH_SIZE*sizeof(int));
+  hist_log_capacity = HISTORY_GROWTH_SIZE;
+  hist_begin_time = (char**)malloc(HISTORY_GROWTH_SIZE*sizeof(char*));
+  hist_end_time = (char**)malloc(HISTORY_GROWTH_SIZE*sizeof(char*));
+  hist_command = (char**)malloc(HISTORY_GROWTH_SIZE*sizeof(char*));
+  hist_status = (char*)malloc(HISTORY_GROWTH_SIZE*sizeof(char));
+  hist_pid = (pid_t*)malloc(HISTORY_GROWTH_SIZE*sizeof(pid_t));
+  hist_state = (int*)malloc(HISTORY_GROWTH_SIZE*sizeof(int));
 
   // tell parent to send completed children to the kill_child() function
-  signal(SIGCHLD,&kill_child);
+  signal(SIGCHLD, &kill_child);
 }
 
 /** prompt - display shell prompt
  **/
 void prompt() {
-  if (cwd != NULL)
+  if (cwd != NULL) {
     free(cwd);
-  cwd = getcwd(NULL,0);
+  }
+  cwd = getcwd(NULL, 0);
 
   // check cwd for HOME to replace with ~
   int i;
@@ -191,9 +189,10 @@ void prompt() {
       break;
     }
   }
+
   if (i != -1) {
-    char *old_cwd = strdup(cwd);
-    char *extra = old_cwd + strlen(HOME);
+    char* old_cwd = strdup(cwd);
+    char* extra = old_cwd + strlen(HOME);
 
     free(cwd);
     cwd = (char*)malloc((3+(strlen(old_cwd)-strlen(HOME)))*sizeof(char));
@@ -207,17 +206,17 @@ void prompt() {
     for (i = 0; i < hist_log_size; i++) {
       if (hist_status[i] == 'R') {
         // create PID file string
-        char *proc_status = (char*)malloc(20*sizeof(char));
+        char* proc_status = (char*)malloc(20*sizeof(char));
         char pid_string[6];
-        sprintf(pid_string,"%d",hist_pid[i]);
-        strcpy(proc_status,"/proc/");
-        strcat(proc_status,pid_string);
-        strcat(proc_status,"/status");
+        sprintf(pid_string, "%d", hist_pid[i]);
+        strcpy(proc_status, "/proc/");
+        strcat(proc_status, pid_string);
+        strcat(proc_status, "/status");
 
         // check status of PID file
         if (access(proc_status,F_OK)) {
           hist_end_time[i] = (char*)malloc(TIME_BUFFER_SIZE*sizeof(char));
-          set_time(END_SLOT,i);
+          set_time(END_SLOT, i);
         }
         free(proc_status);
       }
@@ -225,13 +224,7 @@ void prompt() {
   }
 
   // informative prompt
-  /*
-  printf("-[%s@%s]-[jobs:%d]-[pid:%d]\n",USER,HOSTNAME,num_children,pid_self);
-  printf("-[%s]-> ",cwd);
-  */
-
-  // basic prompt, enabled for project write-up purposes
-  printf("%s@%s:%s:::D ",USER,HOSTNAME,cwd);
+  printf("[%s] %s %% ", cwd, USER);
 }
 
 /** read_input - read input to buffer and parse arguments
@@ -239,38 +232,48 @@ void prompt() {
 void read_input() {
   iter_status = 0;
   buffer = (char*)malloc((BUFFER_SIZE+1)*sizeof(char));
-  fgets(buffer,BUFFER_SIZE,stdin);
+  fgets(buffer, BUFFER_SIZE, stdin);
 
   // remove tail newline/return
   int i;
   for (i = 0; i < BUFFER_SIZE; i++) {
-    if (buffer[i] == '\n' || buffer[i] == '\r')
+    if (buffer[i] == '\n' || buffer[i] == '\r') {
       buffer[i] = 0;
+    }
   }
 
   // check for log capacity limit
-  if ((hist_log_capacity-hist_log_size) < 2)
+  if (hist_log_capacity - hist_log_size < 2) {
     extend_log();
+  }
 
-  char *token;
-  for (i = 0, token = strtok(strdup(buffer),COMMAND_DELIM);
+  char* token;
+  for (i = 0, token = strtok(strdup(buffer), COMMAND_DELIM);
        token != NULL && iter_status == 0;
-       token = strtok(NULL,COMMAND_DELIM), i++) {
+       token = strtok(NULL, COMMAND_DELIM), i++) {
     // first token is command
     if (i == 0) {
       num_commands++;
       command[num_commands-1] = strdup(token);
-    } else if ((num_commands > 1 && strcmp(command[num_commands-2],"&") == 0) ||
-               (i > 1 && strcmp(command_args[num_commands-1][i-2],"&") == 0)) {
-      fprintf(stderr,"mosh: Misplaced & (argument %d).\n",i-1);
+      continue;
+    }
+
+    // handle misplaced ampersand
+    if ((num_commands > 1 && strcmp(command[num_commands-2], "&") == 0) ||
+               (i > 1 && strcmp(command_args[num_commands-1][i-2], "&") == 0)) {
+      fprintf(stderr, "%s: Misplaced & (argument %d).\n", NAME, i-1);
       iter_status = 1;
     } else if (num_commands > 1 &&
-              (i > 1 && strcmp(command_args[num_commands-2][num_args(command_args[num_commands-2])-1],"&") == 0)) {
-      fprintf(stderr,"mosh: Misplaced & (command %d).\n",num_commands-1);
+              (i > 1 && strcmp(command_args[num_commands-2][num_args(command_args[num_commands-2])-1], "&") == 0)) {
+      fprintf(stderr, "%s: Misplaced & (command %d).\n", NAME, num_commands-1);
       iter_status = 1;
     }
+    if (iter_status == 1) {
+      continue;
+    }
+
     // handle piping
-    else if (strcmp(token,"|") == 0) {
+    if (strcmp(token, "|") == 0) {
       // add room for new command
       command = (char**)realloc(command,(num_commands+1)*sizeof(char*));
       command[num_commands] = NULL;
@@ -282,52 +285,51 @@ void read_input() {
 
       // reset argument counting variable
       i = -1;
+      continue;
     }
+
     // handle I/O redirection
-    else if (strcmp(token,">") == 0 || strcmp(token,"<") == 0) {
+    if (strcmp(token, ">") == 0 || strcmp(token, "<") == 0) {
+      char direction = strcmp(token, ">") == 0 ? '>' : '<';
+
       // check for previous redirection flags
       if (redirect[0] != 0) {
-        fprintf(stderr,"mosh: Multiple I/O redirection arguments not supported.\n");
+        fprintf(stderr, "%s: Multiple I/O redirection arguments not supported.\n", NAME);
         iter_status = 1;
       }
 
-      char direction;
-      if (strcmp(token,">") == 0)
-        direction = '>';
-      else
-        direction = '<';
-
       // get next token from input (redirection file)
-      token = strtok(NULL,COMMAND_DELIM);
+      token = strtok(NULL, COMMAND_DELIM);
 
       // check for missing redirect file
       if (token == NULL) {
-        fprintf(stderr,"mosh: No file specified after redirection.\n");
+        fprintf(stderr, "%s: No file specified after redirection.\n", NAME);
         iter_status = 1;
-      } else {
-        redirect = (char*)realloc(redirect,(strlen(token)+2)*sizeof(char));
-        redirect[0] = direction;
-        strcat(redirect,token);
-
-        // set i back to account for redirection flag
-        i--;
+        continue;
       }
-    }
-    // other tokens are arguments
-    else {
-      // make room for argument
-      command_args[num_commands-1] = (char**)realloc(command_args[num_commands-1],(i+1)*sizeof(char*));
-      command_args[num_commands-1][i-1] = strdup(token);
-      command_args[num_commands-1][i] = NULL;
 
-      // check for environment variable
-      char *env_var;
-      if ((env_var = strpbrk(command_args[num_commands-1][i-1],"$")) != NULL)
-        iter_status = expand_env(num_commands-1,i-1);
+      redirect = (char*)realloc(redirect,(strlen(token)+2)*sizeof(char));
+      redirect[0] = direction;
+      strcat(redirect,token);
+
+      // set i back to account for redirection flag
+      i--;
+      continue;
+    }
+
+    // make room for argument
+    command_args[num_commands-1] = (char**)realloc(command_args[num_commands-1],(i+1)*sizeof(char*));
+    command_args[num_commands-1][i-1] = strdup(token);
+    command_args[num_commands-1][i] = NULL;
+
+    // check for environment variable
+    if (strpbrk(command_args[num_commands-1][i-1], "$") != NULL) {
+      iter_status = expand_env(num_commands-1, i-1);
     }
   }
-  if (iter_status == 0)
+  if (iter_status == 0) {
     free(token);
+  }
 
   // check for no input
   if (i == 0 && num_commands == 0) {
@@ -335,12 +337,11 @@ void read_input() {
     return;
   }
 
-  if (iter_status == 0) {
-    if (i > 1 && strcmp(command_args[num_commands-1][i-2],"&") == 0) {
-      iter_status = 2;
-      free(command_args[num_commands-1][i-2]);
-      command_args[num_commands-1][i-2] = NULL;
-    }
+  if (iter_status == 0 && i > 1 &&
+      strcmp(command_args[num_commands-1][i-2], "&") == 0) {
+    iter_status = 2;
+    free(command_args[num_commands-1][i-2]);
+    command_args[num_commands-1][i-2] = NULL;
   }
 }
 
@@ -384,14 +385,14 @@ void execute(int background) {
 
   // check for exit
   for (command_num = 0; command_num < num_commands; command_num++) {
-    if (strcmp(command[command_num],"exit") == 0) {
+    if (strcmp(command[command_num], EXIT_COMMAND) == 0) {
       stay_alive = 0;
       return;
     }
   }
 
   // set history timestamp
-  set_time(BEGIN_SLOT,hist_log_size);
+  set_time(BEGIN_SLOT, hist_log_size);
   hist_command[hist_log_size] = strdup(buffer);
   hist_end_time[hist_log_size] = "--:--";
   hist_log_size++;
@@ -399,66 +400,68 @@ void execute(int background) {
   // check components of command for ~ to replace
   for (command_num = 0; command_num < num_commands; command_num++) {
     // check command
-    if (command[command_num][0] == '~')
+    if (command[command_num][0] == '~') {
       swap_home(&command[command_num]);
+    }
+
     // check arguments
-    for (i = 0; command_args[command_num][i] != NULL; i++)
-      if (command_args[command_num][i][0] == '~')
+    for (i = 0; command_args[command_num][i] != NULL; i++) {
+      if (command_args[command_num][i][0] == '~') {
         swap_home(&command_args[command_num][i]);
+      }
+    }
   }
 
   // fork and execute
   pid_t child_pid = fork();
-  if (child_pid == 0) {
-    stay_alive = 0;
-
-    // iterate through each command
-    for (command_num = 0; command_num < num_commands; command_num++) {
-      int fd_pipe[2];
-
-      // account for I/O redirection
-      if (redirect[0] != 0) {
-        char *redirect_file = redirect+1;
-        if (redirect[0] == '<') {
-          // set input fd to opened file
-          fd_in = open(redirect_file,O_RDONLY);
-        } else {
-          // set output fd to opened file
-          // create if missing
-          // replace current text if it exists
-          fd_out = open(redirect_file,O_RDWR|O_CREAT|O_TRUNC);
-        }
-      }
-
-      // set pipe for stdout if there is a next command
-      else if (command_num != num_commands-1) {
-        pipe(fd_pipe);
-        fd_out = fd_pipe[1];
-      } else {
-        // return stdout fd to default
-        fd_out = keep_output;
-      }
-
-      // execute command with modified stdin/stdout
-      execute_command(command_num,fd_in,fd_out);
-
-      // close fds to prevent any fd leaks
-      close(fd_in);
-      close(fd_out);
-
-      // set stdin for next command
-      fd_in = fd_pipe[0];
-    }
-  } else {
+  if (child_pid != 0) {
     hist_pid[hist_log_size-1] = child_pid;
     if (background == 1) {
       // don't wait for child to finish executing
-      waitpid(child_pid,&hist_state[hist_log_size-1],WNOHANG);
+      waitpid(child_pid, &hist_state[hist_log_size-1], WNOHANG);
     } else {
       // wait for child's termination then set history end time
-      waitpid(child_pid,&hist_state[hist_log_size-1],0);
-      set_time(END_SLOT,hist_log_size-1);
+      waitpid(child_pid, &hist_state[hist_log_size-1], 0);
+      set_time(END_SLOT, hist_log_size-1);
     }
+    return;
+  }
+
+  // iterate through each command
+  stay_alive = 0;
+  for (command_num = 0; command_num < num_commands; command_num++) {
+    int fd_pipe[2];
+
+    // account for I/O redirection
+    if (redirect[0] != 0) {
+      char* redirect_file = redirect+1;
+      if (redirect[0] == '<') {
+        // set input fd to opened file
+        fd_in = open(redirect_file, O_RDONLY);
+      } else {
+        // set output fd to opened file
+        fd_out = open(redirect_file, O_RDWR|O_CREAT|O_TRUNC);
+      }
+    }
+
+    // set pipe for stdout if there is a next command
+    else if (command_num != num_commands-1) {
+      pipe(fd_pipe);
+      fd_out = fd_pipe[1];
+    } else {
+      // return stdout fd to default
+      fd_out = keep_output;
+    }
+
+    // execute command with modified stdin/stdout
+    execute_command(command_num, fd_in, fd_out);
+
+    // close fds to prevent any fd leaks
+    close(fd_in);
+    close(fd_out);
+
+    // set stdin for next command
+    fd_in = fd_pipe[0];
   }
 }
 
@@ -479,104 +482,112 @@ void execute_command(int command_num, int fd_in, int fd_out) {
   }
 
   // check for built-ins
-  if (strcmp(command[command_num],"viewproc") == 0) {
-    if (num_args(command_args[command_num]) > 1)
-      fprintf(stderr,"viewproc: Too many arguments.\n");
-    else
-      viewproc(command_args[command_num][0]);
-  } else if (strcmp(command[command_num],"history") == 0)
-    history();
-  else if (strcmp(command[command_num],"cd") == 0)
+  if (strcmp(command[command_num], CD_COMMAND) == 0) {
     cd(command_args[command_num]);
-  else if (strcmp(command[command_num],"echo") == 0)
+    return;
+  }
+  if (strcmp(command[command_num], HISTORY_COMMAND) == 0) {
+    history();
+    return;
+  }
+  if (strcmp(command[command_num], ECHO_COMMAND) == 0) {
     echo(command_args[command_num]);
-  else if (strcmp(command[command_num],"which") == 0) {
-    if (command_args[command_num][0] == NULL)
+    return;
+  }
+  if (strcmp(command[command_num], WHICH_COMMAND) == 0) {
+    if (command_args[command_num][0] == NULL) {
       which(NULL,0);
-    else if (strcmp(command_args[command_num][0],"-a") == 0)
-      which(command_args[command_num],1);
-    else
-      which(command_args[command_num],0);
+    } else {
+      which(command_args[command_num], strcmp(command_args[command_num][0], "-a") == 0 ? 1 : 0);
+    }
+    return;
+  }
+  if (strcmp(command[command_num], VIEWPROC_COMMAND) == 0) {
+    if (num_args(command_args[command_num]) > 1) {
+      fprintf(stderr, "%s: Too many arguments.\n", VIEWPROC_COMMAND);
+    } else {
+      viewproc(command_args[command_num][0]);
+    }
+    return;
   }
 
-  // execute external command
-  else {
-    int num_exec_args = num_args(command_args[command_num]);
-    command_args[command_num] = (char**)realloc(command_args[command_num],(num_exec_args+2)*sizeof(char*));
-    command_args[command_num][num_exec_args+1] = NULL;
-    for (i = num_args(command_args[command_num]); i > 0; i--)
-        command_args[command_num][i] = strdup(command_args[command_num][i-1]);
-    command_args[command_num][0] = strdup(command[command_num]);
+  // build external command
+  int num_exec_args = num_args(command_args[command_num]);
+  command_args[command_num] = (char**)realloc(command_args[command_num], (num_exec_args+2)*sizeof(char*));
+  command_args[command_num][num_exec_args+1] = NULL;
+  for (i = num_args(command_args[command_num]); i > 0; i--) {
+      command_args[command_num][i] = strdup(command_args[command_num][i-1]);
+  }
+  command_args[command_num][0] = strdup(command[command_num]);
 
-    // check through PATH for executable
-    char *temp_path;
-    for (i = 0; PATH[i] != NULL; i++) {
-      temp_path = (char*)malloc((strlen(command[command_num])+strlen(PATH[i])+1)*sizeof(char));
-      strcpy(temp_path,PATH[i]);
-      strcat(temp_path,"/");
-      strcat(temp_path,command[command_num]);
+  // check through PATH for executable
+  char* temp_path;
+  for (i = 0; PATH[i] != NULL; i++) {
+    temp_path = (char*)malloc((strlen(command[command_num])+strlen(PATH[i])+1)*sizeof(char));
+    strcpy(temp_path, PATH[i]);
+    strcat(temp_path, "/");
+    strcat(temp_path, command[command_num]);
 
-      // check for executable in PATH
-      if (!access(temp_path,X_OK)) {
-        command[command_num] = strdup(temp_path);
-        command_args[command_num][0] = strdup(temp_path);
-        free(temp_path);
-        break;
-      }
+    // check for executable in PATH
+    if (!access(temp_path, X_OK)) {
+      command[command_num] = strdup(temp_path);
+      command_args[command_num][0] = strdup(temp_path);
       free(temp_path);
+      break;
     }
+    free(temp_path);
+  }
 
-    // fork and execute
-    pid_t pid;
-    int status;
-    if (!access(command[command_num],F_OK)) {
-      if (!access(command[command_num],X_OK)) {
-        if ((pid = fork()) == 0) {
-          execv(command[command_num],command_args[command_num]);
-        } else {
-          waitpid(pid,&status,0);
-        }
+  // fork and execute
+  pid_t pid;
+  int status;
+  if (!access(command[command_num], F_OK)) {
+    if (!access(command[command_num], X_OK)) {
+      if ((pid = fork()) == 0) {
+        execv(command[command_num], command_args[command_num]);
       } else {
-        fprintf(stderr,"%s: Permission denied.\n",command[command_num]);
+        waitpid(pid, &status, 0);
       }
     } else {
-      fprintf(stderr,"%s: Command not found.\n",command[command_num]);
+      fprintf(stderr, "%s: Permission denied.\n", command[command_num]);
     }
+  } else {
+    fprintf(stderr, "%s: Command not found.\n", command[command_num]);
   }
 }
 
 /** viewproc - view information about the /proc filesystem
  **/
-void viewproc(char *proc_file) {
+void viewproc(char* proc_file) {
   if (proc_file == NULL) {
-    fprintf(stderr,"viewproc: No file specified.\n");
+    fprintf(stderr, "%s: No file specified.\n", VIEWPROC_COMMAND);
     return;
   }
 
   // piece together proc file absolute path
-  char *proc_path = "/proc/";
-  char *proc_abs_path = (char*)malloc((strlen(proc_path)+strlen(proc_file)+1)*sizeof(char));
+  char* proc_path = "/proc/";
+  char* proc_abs_path = (char*)malloc((strlen(proc_path)+strlen(proc_file)+1)*sizeof(char));
 
-  strcpy(proc_abs_path,proc_path);
-  strcat(proc_abs_path,proc_file);
+  strcpy(proc_abs_path, proc_path);
+  strcat(proc_abs_path, proc_file);
 
-  if (!access(proc_abs_path,F_OK)) {
-    if (!access(proc_abs_path,R_OK)) {
-      FILE *procfile = fopen(proc_abs_path,"r");
-      if (!procfile)
+  if (!access(proc_abs_path, F_OK)) {
+    if (!access(proc_abs_path, R_OK)) {
+      FILE* procfile = fopen(proc_abs_path, "r");
+      if (!procfile) {
         perror(proc_abs_path);
-      else {
+      } else {
         char proc_buffer[BUFFER_SIZE];
-        while (fgets(proc_buffer,BUFFER_SIZE,procfile) != NULL) {
-          printf("%s",proc_buffer);
+        while (fgets(proc_buffer, BUFFER_SIZE, procfile) != NULL) {
+          printf("%s", proc_buffer);
         }
         fclose(procfile);
       }
     } else {
-      fprintf(stderr,"viewproc: Permission denied.\n");
+      fprintf(stderr, "%s: Permission denied.\n", VIEWPROC_COMMAND);
     }
   } else {
-    fprintf(stderr,"viewproc: %s was not found in /proc.\n",proc_file);
+    fprintf(stderr, "%s: %s was not found in /proc.\n", VIEWPROC_COMMAND, proc_file);
   }
 }
 
@@ -586,99 +597,99 @@ void history() {
   int i;
   printf(" PID   State  Begin   End    Command\n");
   for (i = 0; i < hist_log_size-1; i++) {
-    printf("%d\t[%c]   %s  %s   %s\n",hist_pid[i],hist_status[i],hist_begin_time[i],hist_end_time[i],hist_command[i]);
+    printf("%d\t[%c]   %s  %s   %s\n", hist_pid[i], hist_status[i], hist_begin_time[i], hist_end_time[i], hist_command[i]);
   }
 }
 
 /** extend_log - increase capacity for history log
  **/
 void extend_log() {
-  // expand history memory by predefined HIST_GROWTH_SIZE
-  hist_begin_time = (char**)realloc(hist_begin_time,(hist_log_capacity+HIST_GROWTH_SIZE)*sizeof(char*));
-  hist_end_time = (char**)realloc(hist_end_time,(hist_log_capacity+HIST_GROWTH_SIZE)*sizeof(char*));
-  hist_command = (char**)realloc(hist_command,(hist_log_capacity+HIST_GROWTH_SIZE)*sizeof(char*));
-  hist_status = (char*)realloc(hist_status,(hist_log_capacity+HIST_GROWTH_SIZE)*sizeof(char));
-  hist_pid = (pid_t*)realloc(hist_pid,(hist_log_capacity+HIST_GROWTH_SIZE)*sizeof(pid_t));
-  hist_state = (int*)realloc(hist_state,(hist_log_capacity+HIST_GROWTH_SIZE)*sizeof(int));
+  // expand history memory by predefined HISTORY_GROWTH_SIZE
+  hist_begin_time = (char**)realloc(hist_begin_time, (hist_log_capacity+HISTORY_GROWTH_SIZE)*sizeof(char*));
+  hist_end_time = (char**)realloc(hist_end_time, (hist_log_capacity+HISTORY_GROWTH_SIZE)*sizeof(char*));
+  hist_command = (char**)realloc(hist_command, (hist_log_capacity+HISTORY_GROWTH_SIZE)*sizeof(char*));
+  hist_status = (char*)realloc(hist_status, (hist_log_capacity+HISTORY_GROWTH_SIZE)*sizeof(char));
+  hist_pid = (pid_t*)realloc(hist_pid, (hist_log_capacity+HISTORY_GROWTH_SIZE)*sizeof(pid_t));
+  hist_state = (int*)realloc(hist_state, (hist_log_capacity+HISTORY_GROWTH_SIZE)*sizeof(int));
 
-  hist_log_capacity += HIST_GROWTH_SIZE;
+  hist_log_capacity += HISTORY_GROWTH_SIZE;
 }
 
 /** echo - print out arguments to screen
  **/
-void echo(char **input) {
+void echo(char** input) {
   int i;
   for (i = 0; input[i] != NULL; i++) {
-    printf("%s",input[i]);
-    if (input[i+1] != NULL)
-      printf(" ");
+    printf("%s%s", input[i], input[i+1] != NULL ? " " : "\n");
   }
-  printf("\n");
 }
 
 /** cd - change current directory to new_dir
  **/
-void cd(char **input) {
+void cd(char** input) {
   // use HOME for no arguments
-  if (num_args(input) == 0)
+  if (num_args(input) == 0) {
     chdir(HOME);
+    return;
+  }
 
   // check for bad syntax
-  else if (num_args(input) > 1)
-    fprintf(stderr,"cd: Too many arguments.\n");
+  if (num_args(input) > 1) {
+    fprintf(stderr, "%s: Too many arguments.\n", CD_COMMAND);
+    return;
+  }
 
-  else {
-    // replace leading ~ with HOME path
-    if (input[0][0] == '~')
-      swap_home(&input[0]);
+  // replace leading ~ with HOME path
+  if (input[0][0] == '~') {
+    swap_home(&input[0]);
+  }
 
-    if (!access(input[0],F_OK)) {
-      if (chdir(input[0]) == -1)
-        if (errno == ENOTDIR) {
-          fprintf(stderr,"cd: %s: Not a directory.\n",input[0]);
-          errno = 0;
-        }
-    } else
-      fprintf(stderr,"cd: %s: No such file or directory.\n",input[0]);
+  if (access(input[0], F_OK)) {
+    fprintf(stderr, "%s: %s: No such file or directory.\n", CD_COMMAND, input[0]);
+  } else if (chdir(input[0]) == -1 && errno == ENOTDIR) {
+    fprintf(stderr, "%s: %s: Not a directory.\n", CD_COMMAND, input[0]);
+    errno = 0;
   }
 }
 
 /** which - show full path of executable if existant
  **/
-void which(char **input, int list_all) {
+void which(char** input, int list_all) {
   // check for no input
   if (num_args(input) == 0 ||
-     (num_args(input) == 1 && list_all == 1)) {
-    fprintf(stderr,"which: No command provided.\n");
+      (num_args(input) == 1 && list_all == 1)) {
+    fprintf(stderr, "%s: No command provided.\n", WHICH_COMMAND);
     return;
   }
 
   // search through every PATH for every input value
-  char *test_path = NULL;
+  char* test_path = NULL;
   int i, j;
   for (j = list_all; input[j] != NULL; j++) {
     // check for built-ins
-    if (strcmp(input[j],"exit") == 0 ||
-        strcmp(input[j],"history") == 0 ||
-        strcmp(input[j],"cd") == 0 ||
-        strcmp(input[j],"echo") == 0 ||
-        strcmp(input[j],"which") == 0)
-      printf("%s: Built-in command.\n",input[j]);
+    if (strcmp(input[j], EXIT_COMMAND) == 0 ||
+        strcmp(input[j], HISTORY_COMMAND) == 0 ||
+        strcmp(input[j], CD_COMMAND) == 0 ||
+        strcmp(input[j], ECHO_COMMAND) == 0 ||
+        strcmp(input[j], WHICH_COMMAND) == 0) {
+      printf("%s: Built-in command.\n", input[j]);
+      continue;
+    }
 
-    else {
-      for (i = 0; PATH[i] != NULL; i++, free(test_path)) {
-        test_path = (char*)malloc((strlen(PATH[i])+strlen(input[j])+2)*sizeof(char));
-        strcpy(test_path,PATH[i]);
-        strcat(test_path,"/");
-        strcat(test_path,input[j]);
+    for (i = 0; PATH[i] != NULL; i++, free(test_path)) {
+      test_path = (char*)malloc((strlen(PATH[i])+strlen(input[j])+2)*sizeof(char));
+      strcpy(test_path, PATH[i]);
+      strcat(test_path, "/");
+      strcat(test_path, input[j]);
 
-        if (!access(test_path,X_OK)) {
-          printf("%s\n",test_path);
-          if (list_all == 0) {
-            free(test_path);
-            break;
-          }
-        }
+      if (access(test_path, X_OK)) {
+        continue;
+      }
+
+      printf("%s\n", test_path);
+      if (list_all == 0) {
+        free(test_path);
+        break;
       }
     }
   }
@@ -686,13 +697,13 @@ void which(char **input, int list_all) {
 
 /** swap_home - swap ~ with absolute HOME path
  **/
-void swap_home(char **string) {
-  char *temp = (char*)malloc((strlen(HOME)+1)*sizeof(char));
-  char *good_input = *string + 1;
+void swap_home(char** string) {
+  char* temp = (char*)malloc((strlen(HOME)+1)*sizeof(char));
+  char* good_input = *string + 1;
 
-  strcpy(temp,HOME);
-  temp = (char*)realloc(temp,(strlen(HOME)+strlen(good_input)+1)*sizeof(char));
-  strcat(temp,good_input);
+  strcpy(temp, HOME);
+  temp = (char*)realloc(temp, (strlen(HOME)+strlen(good_input)+1)*sizeof(char));
+  strcat(temp, good_input);
 
   *string = strdup(temp);
   free(temp);
@@ -700,10 +711,11 @@ void swap_home(char **string) {
 
 /** num_args - return number of arguments passed in
  **/
-int num_args(char **arguments) {
+int num_args(char** arguments) {
   // check for no arguments
-  if (arguments == NULL)
+  if (arguments == NULL) {
     return 0;
+  }
 
   // count total non-NULL arguments and return value
   int total_args;
@@ -715,22 +727,22 @@ int num_args(char **arguments) {
 /** expand_env - expand environment variable
  **/
 int expand_env(int command_num, int index) {
-  char *variable_begin = strpbrk(command_args[command_num][index],"$");
-  char *variable_name = (char*)malloc((strlen(variable_begin+1)+1)*sizeof(char));
-  char *value = NULL;
-  char *pre_var = NULL;
-  char *post_var = NULL;
-  char *temp = NULL;
+  char* variable_begin = strpbrk(command_args[command_num][index],"$");
+  char* variable_name = (char*)malloc((strlen(variable_begin+1)+1)*sizeof(char));
+  char* value = NULL;
+  char* pre_var = NULL;
+  char* post_var = NULL;
+  char* temp = NULL;
   int extra_chars = 0;
   int i;
 
-  strcpy(variable_name,variable_begin+1);
+  strcpy(variable_name, variable_begin+1);
 
   // check for content in argument before variable
   if (variable_begin != command_args[command_num][index]) {
     for (i = 0; command_args[command_num][index][i] != '$'; i++) {}
     pre_var = (char*)malloc((i+1)*sizeof(char));
-    strncpy(pre_var,command_args[command_num][index],i);
+    strncpy(pre_var, command_args[command_num][index],i);
     pre_var[i] = 0;
     extra_chars += strlen(pre_var);
   }
@@ -739,10 +751,10 @@ int expand_env(int command_num, int index) {
   for (i = 0; i < strlen(variable_name); i++) {
     if (ispunct(variable_name[i])) {
       post_var = (char*)malloc((strlen(variable_name+i)+1)*sizeof(char));
-      strcpy(post_var,variable_name+i);
+      strcpy(post_var, variable_name+i);
       extra_chars += strlen(post_var);
       temp = (char*)malloc((i+1)*sizeof(char));
-      strncpy(temp,variable_name,i);
+      strncpy(temp, variable_name, i);
       temp[i] = 0;
       free(variable_name);
       variable_name = strdup(temp);
@@ -765,38 +777,9 @@ int expand_env(int command_num, int index) {
 
   value = getenv(variable_name);
 
-  // replace variable with value (if it exists)
-  if (value != NULL) {
-    free(command_args[command_num][index]);
-
-    command_args[command_num][index] = (char*)malloc((strlen(value)+1)*sizeof(char));
-    command_args[command_num][index][0] = 0;
-
-    // check for extra pre/post characters
-    if (post_var != NULL || pre_var != NULL) {
-      command_args[command_num][index] = (char*)realloc(command_args[command_num][index],(extra_chars+strlen(value)+1)*sizeof(char));
-    }
-
-    // piece together final product
-    if (pre_var != NULL)
-      strcat(command_args[command_num][index],pre_var);
-    strcat(command_args[command_num][index],value);
-    if (post_var != NULL)
-      strcat(command_args[command_num][index],post_var);
-
-    // free variables and exit
-    free(variable_name);
-    if (pre_var != NULL) {
-      free(pre_var);
-    }
-    if (post_var != NULL) {
-      free(post_var);
-    }
-    return 0;
-  }
   // handle variable not found
-  else {
-    fprintf(stderr,"mosh: Environment variable %s not found.\n",variable_name);
+  if (value == NULL) {
+    fprintf(stderr, "%s: Environment variable %s not found.\n", NAME, variable_name);
     free(variable_name);
     if (pre_var != NULL) {
       free (pre_var);
@@ -806,6 +789,34 @@ int expand_env(int command_num, int index) {
     }
     return 1;
   }
+
+  free(command_args[command_num][index]);
+  command_args[command_num][index] = (char*)malloc((strlen(value)+1)*sizeof(char));
+  command_args[command_num][index][0] = 0;
+
+  // check for extra pre/post characters
+  if (post_var != NULL || pre_var != NULL) {
+    command_args[command_num][index] = (char*)realloc(command_args[command_num][index], (extra_chars+strlen(value)+1)*sizeof(char));
+  }
+
+  // piece together final product
+  if (pre_var != NULL) {
+    strcat(command_args[command_num][index], pre_var);
+  }
+  strcat(command_args[command_num][index], value);
+  if (post_var != NULL) {
+    strcat(command_args[command_num][index], post_var);
+  }
+
+  // free variables and exit
+  free(variable_name);
+  if (pre_var != NULL) {
+    free(pre_var);
+  }
+  if (post_var != NULL) {
+    free(post_var);
+  }
+  return 0;
 }
 
 /** set_time - get and store time
@@ -814,17 +825,17 @@ void set_time(int time_slot, int index) {
   timestamp = time(NULL);
   timeinfo = localtime(&timestamp);
   time_buffer = (char*)malloc(TIME_BUFFER_SIZE*sizeof(char));
-  strftime(time_buffer,6,"%I:%M",timeinfo);
+  strftime(time_buffer, 6, "%I:%M", timeinfo);
 
   if (time_slot == 0) {
     hist_status[index] = 'R';
     hist_begin_time[index] = (char*)malloc(TIME_BUFFER_SIZE*sizeof(char));
-    strcpy(hist_begin_time[index],time_buffer);
+    strcpy(hist_begin_time[index], time_buffer);
     num_children++;
   } else {
     hist_status[index] = 'C';
     hist_end_time[index] = (char*)malloc(TIME_BUFFER_SIZE*sizeof(char));
-    strcpy(hist_end_time[index],time_buffer);
+    strcpy(hist_end_time[index], time_buffer);
     num_children--;
   }
 
@@ -837,6 +848,6 @@ void kill_child() {
   int status;
 
   // kill child and reset signal
-  waitpid(0,&status,WNOHANG);
-  signal(SIGCHLD,&kill_child);
+  waitpid(0, &status, WNOHANG);
+  signal(SIGCHLD, &kill_child);
 }
